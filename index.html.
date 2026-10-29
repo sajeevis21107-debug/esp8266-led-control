@@ -1,0 +1,319 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP8266 Firebase LED Control</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      color: #f5f5f5;
+      background: linear-gradient(135deg, #101827, #172554, #111827);
+    }
+
+    .dashboard {
+      width: 100%;
+      max-width: 420px;
+      padding: 30px;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    .tag {
+      color: #60a5fa;
+      font-size: 12px;
+      letter-spacing: 3px;
+      font-weight: bold;
+    }
+
+    h1 {
+      font-size: 26px;
+      margin: 14px 0 8px;
+    }
+
+    .subtitle {
+      color: #aebbd0;
+      font-size: 14px;
+      margin-bottom: 28px;
+    }
+
+    .bulb {
+      width: 115px;
+      height: 115px;
+      margin: 0 auto 22px;
+      border-radius: 50%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #253047;
+      border: 3px solid #475569;
+      transition: 0.3s;
+    }
+
+    .bulb span {
+      font-size: 55px;
+      filter: grayscale(1);
+      transition: 0.3s;
+    }
+
+    .bulb.on {
+      background: #fef3c7;
+      border-color: #facc15;
+      box-shadow: 0 0 25px #facc15, 0 0 65px #f59e0b;
+    }
+
+    .bulb.on span {
+      filter: none;
+    }
+
+    .state {
+      font-size: 22px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .connection {
+      color: #aebbd0;
+      font-size: 13px;
+      margin-bottom: 25px;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      flex: 1;
+      border: none;
+      padding: 15px 10px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      filter: brightness(1.1);
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: wait;
+      transform: none;
+    }
+
+    .on-btn {
+      color: #052e16;
+      background: #4ade80;
+    }
+
+    .off-btn {
+      color: white;
+      background: #ef4444;
+    }
+
+    .message {
+      min-height: 20px;
+      margin-top: 18px;
+      font-size: 13px;
+      color: #93c5fd;
+      overflow-wrap: anywhere;
+    }
+
+    .info {
+      margin-top: 22px;
+      padding-top: 18px;
+      border-top: 1px solid #374151;
+      color: #9ca3af;
+      font-size: 12px;
+      line-height: 1.8;
+    }
+
+    .footer {
+      margin-top: 18px;
+      font-size: 11px;
+      color: #64748b;
+    }
+  </style>
+</head>
+
+<body>
+  <main class="dashboard">
+    <div class="tag">IOT CONTROL PANEL</div>
+    <h1>ESP8266 LED Control</h1>
+    <div class="subtitle">Control your LED from anywhere</div>
+
+    <div class="bulb" id="bulb">
+      <span>💡</span>
+    </div>
+
+    <div class="state" id="ledState">Loading...</div>
+    <div class="connection" id="deviceStatus">
+      Checking device connection...
+    </div>
+
+    <div class="buttons">
+      <button class="on-btn" id="onBtn" onclick="setLED(true)">
+        ⚡ LED ON
+      </button>
+
+      <button class="off-btn" id="offBtn" onclick="setLED(false)">
+        LED OFF
+      </button>
+    </div>
+
+    <div class="message" id="message" role="status">
+      Connecting to Firebase...
+    </div>
+
+    <div class="info">
+      <div>Controller: ESP8266 NodeMCU</div>
+      <div>External LED pin: D0 / GPIO16</div>
+      <div>Cloud: Firebase Realtime Database</div>
+    </div>
+
+    <div class="footer">GITHUB PAGES • IOT PROJECT</div>
+  </main>
+
+  <script>
+    // 1. Replace this with your Firebase database URL.
+    // Example: https://your-project-default-rtdb.firebaseio.com
+    const FIREBASE_URL =
+      "https://YOUR_FIREBASE_DATABASE_URL";
+
+    // Leave empty only if your database permits unauthenticated access.
+    // For protected databases, provide a valid Firebase ID token
+    // obtained through a properly configured authentication flow.
+    const FIREBASE_AUTH_TOKEN = "";
+
+    const bulb = document.getElementById("bulb");
+    const ledState = document.getElementById("ledState");
+    const deviceStatus = document.getElementById("deviceStatus");
+    const message = document.getElementById("message");
+    const onBtn = document.getElementById("onBtn");
+    const offBtn = document.getElementById("offBtn");
+
+    let busy = false;
+    let lastLedState = null;
+
+    function firebaseUrl(path) {
+      const base = FIREBASE_URL.replace(/\/+$/, "");
+      const auth = FIREBASE_AUTH_TOKEN
+        ? "?auth=" + encodeURIComponent(FIREBASE_AUTH_TOKEN)
+        : "";
+
+      return base + "/" + path + ".json" + auth;
+    }
+
+    async function firebaseRequest(path, options = {}) {
+      const response = await fetch(firebaseUrl(path), {
+        ...options,
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          ...(options.headers || {})
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error("Firebase HTTP error: " + response.status);
+      }
+
+      return response.json();
+    }
+
+    function showLED(isOn) {
+      lastLedState = Boolean(isOn);
+
+      bulb.classList.toggle("on", lastLedState);
+      ledState.textContent = lastLedState ? "LED IS ON" : "LED IS OFF";
+    }
+
+    async function setLED(isOn) {
+      if (busy) return;
+
+      busy = true;
+      onBtn.disabled = true;
+      offBtn.disabled = true;
+      message.textContent = "Sending command to Firebase...";
+
+      try {
+        // Save the command for the ESP8266 to read.
+        await firebaseRequest("led", {
+          method: "PUT",
+          body: JSON.stringify(Boolean(isOn))
+        });
+
+        showLED(isOn);
+        message.textContent =
+          "Command saved! Waiting for ESP8266 to respond.";
+
+        // Read back device-reported state, if available.
+        await refreshStatus();
+      } catch (error) {
+        message.textContent = "Error: " + error.message;
+      } finally {
+        busy = false;
+        onBtn.disabled = false;
+        offBtn.disabled = false;
+      }
+    }
+
+    async function refreshStatus() {
+      try {
+        const result = await firebaseRequest("led");
+        if (typeof result === "boolean") {
+          showLED(result);
+        }
+
+        const online = await firebaseRequest("status/online");
+
+        deviceStatus.textContent = online === true
+          ? "🟢 ESP8266 online"
+          : "🔴 ESP8266 offline or not reporting";
+
+        // This is the device-reported physical output state.
+        const reportedState = await firebaseRequest("status/ledOn");
+
+        if (typeof reportedState === "boolean") {
+          showLED(reportedState);
+        }
+      } catch (error) {
+        deviceStatus.textContent = "⚠️ Firebase connection failed";
+        message.textContent =
+          "Check your database URL, network and access rules.";
+      }
+    }
+
+    // Poll Firebase to keep the dashboard updated.
+    if (FIREBASE_URL.includes("YOUR_FIREBASE_DATABASE_URL")) {
+      message.textContent =
+        "Setup required: replace YOUR_FIREBASE_DATABASE_URL.";
+      deviceStatus.textContent = "Not configured";
+      onBtn.disabled = true;
+      offBtn.disabled = true;
+    } else {
+      refreshStatus();
+      setInterval(refreshStatus, 3000);
+    }
+  </script>
+</body>
+</html>
